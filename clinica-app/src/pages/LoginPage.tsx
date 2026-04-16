@@ -1,6 +1,9 @@
 import { useState } from "react";
 import { Building2, CalendarDays, Stethoscope, Users } from "lucide-react";
 import { mockUsers, STORAGE_KEY } from "../data/mock";
+import { isSupabaseConfigured } from "../lib/supabase";
+import { login } from "../services/auth.service";
+import { getProfileById } from "../services/profile.service";
 import type { User } from "../types";
 
 type LoginPageProps = {
@@ -11,23 +14,43 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
   const [email, setEmail] = useState("admin@selfcare.com");
   const [password, setPassword] = useState("123456");
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  const handleLogin = (e: React.FormEvent<HTMLFormElement>) => {
+  const handleLogin = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setError("");
 
-    const foundUser = mockUsers.find(
-      (user) => user.email === email && user.password === password
-    );
+    if (!isSupabaseConfigured()) {
+      const foundUser = mockUsers.find(
+        (user) => user.email === email && user.password === password,
+      );
 
-    if (!foundUser) {
-      setError("Credenciales inválidas. Probá con uno de los usuarios demo.");
+      if (!foundUser) {
+        setError("Credenciales inválidas. Probá con uno de los usuarios demo.");
+        return;
+      }
+
+      const { password: _password, ...safeUser } = foundUser;
+      void _password;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(safeUser));
+      onLogin(safeUser);
       return;
     }
 
-    const { password: _password, ...safeUser } = foundUser;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(safeUser));
-    onLogin(safeUser);
+    try {
+      setLoading(true);
+      const session = await login(email, password);
+      const profile = await getProfileById(session.user.id, session.access_token);
+      onLogin(profile);
+    } catch (loginError) {
+      setError(
+        loginError instanceof Error
+          ? loginError.message
+          : "No se pudo iniciar sesión.",
+      );
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -93,7 +116,9 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
               Ingresar al sistema
             </h2>
             <p className="mt-2 text-sm text-slate-500">
-              Demo del front con login simulado usando localStorage.
+              {isSupabaseConfigured()
+                ? "Autenticación real conectada a Supabase."
+                : "Demo del front con login simulado usando localStorage."}
             </p>
           </div>
 
@@ -137,9 +162,10 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
 
             <button
               type="submit"
-              className="h-12 w-full rounded-2xl bg-blue-600 font-medium text-white transition hover:bg-blue-700"
+              disabled={loading}
+              className="h-12 w-full rounded-2xl bg-blue-600 font-medium text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-80"
             >
-              Ingresar
+              {loading ? "Ingresando..." : "Ingresar"}
             </button>
           </form>
 

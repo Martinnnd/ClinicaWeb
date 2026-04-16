@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Building2, CalendarDays, Stethoscope, Users } from "lucide-react";
 import Sidebar from "../components/Sidebar";
 import StatCard from "../components/StatCard";
@@ -10,7 +10,12 @@ import {
   mockDoctors,
   mockPatients,
 } from "../data/mock";
-import type { DashboardSection, User } from "../types";
+import { isSupabaseConfigured } from "../lib/supabase";
+import { getSession } from "../services/auth.service";
+import { getAppointments } from "../services/appointments.service";
+import { getDoctors } from "../services/doctors.service";
+import { getPatients } from "../services/patients.service";
+import type { Appointment, DashboardSection, Doctor, Patient, User } from "../types";
 
 type DashboardPageProps = {
   user: User;
@@ -23,24 +28,63 @@ export default function DashboardPage({
 }: DashboardPageProps) {
   const [currentSection, setCurrentSection] =
     useState<DashboardSection>("dashboard");
+  const [appointments, setAppointments] = useState<Appointment[]>(mockAppointments);
+  const [patients, setPatients] = useState<Patient[]>(mockPatients);
+  const [doctors, setDoctors] = useState<Doctor[]>(mockDoctors);
+  const [loadingData, setLoadingData] = useState(false);
+  const [dataError, setDataError] = useState("");
+
+  useEffect(() => {
+    const loadData = async () => {
+      if (!isSupabaseConfigured()) return;
+
+      const session = getSession();
+      if (!session) return;
+
+      try {
+        setLoadingData(true);
+        setDataError("");
+
+        const [appointmentsData, patientsData, doctorsData] = await Promise.all([
+          getAppointments(session.access_token),
+          getPatients(session.access_token),
+          getDoctors(session.access_token),
+        ]);
+
+        setAppointments(appointmentsData);
+        setPatients(patientsData);
+        setDoctors(doctorsData);
+      } catch (error) {
+        setDataError(
+          error instanceof Error
+            ? error.message
+            : "No se pudieron cargar los datos desde Supabase.",
+        );
+      } finally {
+        setLoadingData(false);
+      }
+    };
+
+    void loadData();
+  }, []);
 
   const filteredAppointments = useMemo(() => {
     if (user.role !== "medico") {
-      return mockAppointments;
+      return appointments;
     }
 
-    return mockAppointments.filter(
-      (appointment) => appointment.doctorName === user.fullName
+    return appointments.filter(
+      (appointment) => appointment.doctorName === user.fullName,
     );
-  }, [user]);
+  }, [appointments, user]);
 
   const filteredDoctors = useMemo(() => {
     if (user.role === "medico") {
-      return mockDoctors.filter((doctor) => doctor.fullName === user.fullName);
+      return doctors.filter((doctor) => doctor.fullName === user.fullName);
     }
 
-    return mockDoctors;
-  }, [user]);
+    return doctors;
+  }, [doctors, user]);
 
   const pageTitleMap: Record<DashboardSection, string> = {
     dashboard: "Bienvenido",
@@ -79,24 +123,39 @@ export default function DashboardPage({
             </p>
           </div>
 
+          {dataError && (
+            <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+              {dataError}
+            </div>
+          )}
+
+          {loadingData && (
+            <div className="mt-4 rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-700">
+              Cargando datos en tiempo real desde Supabase...
+            </div>
+          )}
+
           {(currentSection === "dashboard" || currentSection === "turnos") && (
             <>
               <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                 <StatCard
                   title="Turnos de hoy"
-                  value="18"
+                  value={String(filteredAppointments.length)}
                   icon={<CalendarDays className="h-5 w-5" />}
                   hint="Distribuidos entre especialidades"
                 />
                 <StatCard
                   title="Pacientes activos"
-                  value="324"
+                  value={String(patients.length)}
                   icon={<Users className="h-5 w-5" />}
                   hint="Pacientes con atención reciente"
                 />
                 <StatCard
                   title="Médicos disponibles"
-                  value="20"
+                  value={String(
+                    filteredDoctors.filter((doctor) => doctor.status === "Activo")
+                      .length,
+                  )}
                   icon={<Stethoscope className="h-5 w-5" />}
                   hint="En esta sucursal"
                 />
@@ -116,7 +175,7 @@ export default function DashboardPage({
 
           {currentSection === "pacientes" && (
             <div className="mt-6">
-              <PatientsSection patients={mockPatients} />
+              <PatientsSection patients={patients} />
             </div>
           )}
 
